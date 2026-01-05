@@ -40,6 +40,23 @@ artifact = tag_class(
     },
 )
 
+library = tag_class(
+    doc = "Used to define a Maven library with explicit transitive dependency control. Unlike artifacts which create a flat graph of targets, libraries bundle their dependencies into a single java_library target with explicit exports. The library is self-sufficient - it automatically adds the artifact to dependency resolution.",
+    attrs = {
+        "name": attr.string(default = DEFAULT_NAME),
+        "group": attr.string(mandatory = True),
+        "artifact": attr.string(mandatory = True),
+        "version": attr.string(mandatory = True),
+        "classifier": attr.string(),
+        "neverlink": attr.bool(),
+        "testonly": attr.bool(),
+        "transitives": attr.string_list(
+            doc = "List of transitive dependencies to include in exports, in `groupId:artifactId` format. By default (empty list), only the root JAR is included.",
+            allow_empty = True,
+        ),
+    },
+)
+
 install = tag_class(
     doc = "Combines artifact and bom declarations with setting the location of lock files to use, and repositories to download artifacts from. There can only be one `install` tag with a given `name` per module. `install` tags with the same name across multiple modules will be merged, with the root module taking precedence.",
     attrs = {
@@ -428,6 +445,24 @@ def _process_module_tags(mctx, mod, target_repos, repo_name_2_module_name):
         repo["artifacts"] = existing_artifacts
         target_repos[artifact.name] = repo
 
+    for lib in mod.tags.library:
+        _check_repo_name(repo_name_2_module_name, lib.name, mod.name)
+
+        repo = target_repos.get(lib.name, {})
+        existing_libraries = repo.get("libraries", [])
+        existing_libraries.append(struct(
+            group = lib.group,
+            artifact = lib.artifact,
+            version = lib.version,
+            classifier = lib.classifier,
+            neverlink = lib.neverlink,
+            testonly = lib.testonly,
+            transitives = lib.transitives,
+        ))
+
+        repo["libraries"] = existing_libraries
+        target_repos[lib.name] = repo
+
     for install in mod.tags.install:
         _check_repo_name(repo_name_2_module_name, install.name, mod.name)
 
@@ -676,8 +711,37 @@ def maven_impl(mctx):
 
     existing_repos = []
     for (name, repo) in repos.items():
+        artifacts = repo.get("artifacts", [])
+        libraries = repo.get("libraries", [])
+
+        artifact_coords = {}
+        for a in artifacts:
+            coord = "%s:%s" % (a.group, a.artifact)
+            if hasattr(a, "classifier") and a.classifier:
+                coord = coord + ":" + a.classifier
+            artifact_coords[coord] = True
+
+        for lib in libraries:
+            lib_coord = "%s:%s" % (lib.group, lib.artifact)
+            if hasattr(lib, "classifier") and lib.classifier:
+                lib_coord = lib_coord + ":" + lib.classifier
+            if lib_coord in artifact_coords:
+                fail("Coordinate '%s' is declared as both artifact and library in repo '%s'. Use either maven.install(artifacts=[...]) OR maven.library(), not both." % (lib_coord, name))
+
+        for lib in libraries:
+            artifacts.append(struct(
+                group = lib.group,
+                artifact = lib.artifact,
+                version = lib.version,
+                classifier = lib.classifier if hasattr(lib, "classifier") else None,
+                neverlink = lib.neverlink if hasattr(lib, "neverlink") else None,
+                testonly = lib.testonly if hasattr(lib, "testonly") else None,
+                exclusions = None,
+            ))
+
         boms_json = [json.encode(remove_fields(b)) for b in repo.get("boms", [])]
-        artifacts_json = [json.encode(remove_fields(a)) for a in repo.get("artifacts", [])]
+        artifacts_json = [json.encode(remove_fields(a)) for a in artifacts]
+        libraries_json = [json.encode(remove_fields(lib)) for lib in libraries]
 
         excluded_artifacts = parse.parse_exclusion_spec_list(repo.get("excluded_artifacts", []))
         excluded_artifacts_json = [_json.write_exclusion_spec(a) for a in excluded_artifacts]
@@ -701,6 +765,7 @@ def maven_impl(mctx):
                 user_provided_name = name,
                 repositories = repo.get("repositories"),
                 artifacts = artifacts_json,
+                libraries = libraries_json,
                 boms = boms_json,
                 fail_on_missing_checksum = repo.get("fail_on_missing_checksum"),
                 fetch_sources = repo.get("fetch_sources"),
@@ -765,6 +830,7 @@ def maven_impl(mctx):
                 repositories = repo.get("repositories"),
                 boms = boms_json,
                 artifacts = artifacts_json,
+                libraries = libraries_json,
                 fetch_sources = repo.get("fetch_sources"),
                 fetch_javadoc = repo.get("fetch_javadoc"),
                 resolver = repo.get("resolver", _DEFAULT_RESOLVER),
@@ -807,6 +873,7 @@ maven = module_extension(
         "artifact": artifact,
         "from_toml": from_toml,
         "install": install,
+        "library": library,
         "override": override,
     },
 )

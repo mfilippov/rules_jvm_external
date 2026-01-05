@@ -957,6 +957,52 @@ dev_maven.override(
     target = "@root_module_can_override//:com_squareup_javapoet",
 )
 
+dev_maven.library(
+    name = "library_testing",
+    group = "com.google.guava",
+    artifact = "guava",
+    version = "31.1-jre",
+    transitives = ["com.google.guava:failureaccess"],
+)
+
+dev_maven.library(
+    name = "library_no_transitives_testing",
+    group = "com.google.guava",
+    artifact = "guava",
+    version = "31.1-jre",
+)
+
+dev_maven.library(
+    name = "library_neverlink_testing",
+    group = "javax.servlet",
+    artifact = "javax.servlet-api",
+    version = "4.0.1",
+    neverlink = True,
+)
+
+dev_maven.library(
+    name = "library_testonly_testing",
+    group = "junit",
+    artifact = "junit",
+    version = "4.13.2",
+    testonly = True,
+)
+
+# Library with lock file to test pinned mode (jar + srcjar download)
+dev_maven.install(
+    name = "library_lockfile_testing",
+    fetch_sources = True,
+    lock_file = "//tests/custom_maven_install:library_lockfile_testing_install.json",
+)
+
+dev_maven.library(
+    name = "library_lockfile_testing",
+    group = "com.google.guava",
+    artifact = "guava",
+    version = "31.1-jre",
+    transitives = ["com.google.guava:failureaccess"],
+)
+
 # Where there are file locks, the pinned and unpinned repos are listed
 # next to each other. Where compat repositories are created, they are
 # listed next to the repo that created them. The list is otherwise kept
@@ -971,6 +1017,15 @@ use_repo(
     "forcing_versions",
     "from_files",
     "global_exclusion_testing",
+    "library_neverlink_testing",
+    "library_no_transitives_testing",
+
+    # Pinned repo
+    "library_lockfile_testing",
+    "unpinned_library_lockfile_testing",
+
+    "library_testing",
+    "library_testonly_testing",
     "m2local_testing",
     "m2local_testing_ignore_empty_files",
 

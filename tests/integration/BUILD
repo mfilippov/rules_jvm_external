@@ -1,4 +1,5 @@
 load("@aspect_bazel_lib//lib:diff_test.bzl", "diff_test")
+load("@bazel_skylib//rules:build_test.bzl", "build_test")
 load("@rules_java//java:defs.bzl", "java_library")
 load("//:defs.bzl", "artifact")
 load(":is_bzlmod_enabled.bzl", "is_bzlmod_enabled")
@@ -177,4 +178,130 @@ genquery(
     ],
     scope = ["@maven_resolved_with_boms//:org_seleniumhq_selenium_selenium_java"],
     deps = [],
+)
+
+# Library testing - verify transitives filtering works
+# This test verifies that when using maven.library() with transitives = ["com.google.guava:failureaccess"],
+# the library target only exports guava__jar and failureaccess__jar
+genquery(
+    name = "library-transitive-only-deps",
+    expression = "deps(@library_testing//:com_google_guava_guava, 1)",
+    opts = [
+        "--nohost_deps",
+        "--noimplicit_deps",
+    ],
+    scope = ["@library_testing//:com_google_guava_guava"],
+    tags = [] if is_bzlmod_enabled() else ["manual"],
+)
+
+genrule(
+    name = "library-transitive-only-deps-sorted",
+    testonly = 1,
+    srcs = [":library-transitive-only-deps"],
+    outs = ["library-transitive-only-deps-sorted.txt"],
+    cmd = "cat $< | sed -e 's|^@@|@|g; s|\r||g' | sed -e 's|^@[^/]*[+~]|@|g; s|\r||g' | sort > $@",
+)
+
+diff_test(
+    name = "library_transitive_only_test",
+    file1 = "library-transitive-only-deps.golden.unix",
+    file2 = ":library-transitive-only-deps-sorted",
+    tags = [] if is_bzlmod_enabled() else ["manual"],
+)
+
+# Library testing - verify empty transitives (no transitives = default)
+# This test verifies that when using maven.library() without transitives,
+# the library target only exports the root JAR (guava__jar)
+genquery(
+    name = "library-no-transitives-deps",
+    expression = "deps(@library_no_transitives_testing//:com_google_guava_guava, 1)",
+    opts = [
+        "--nohost_deps",
+        "--noimplicit_deps",
+    ],
+    scope = ["@library_no_transitives_testing//:com_google_guava_guava"],
+    tags = [] if is_bzlmod_enabled() else ["manual"],
+)
+
+genrule(
+    name = "library-no-transitives-deps-sorted",
+    testonly = 1,
+    srcs = [":library-no-transitives-deps"],
+    outs = ["library-no-transitives-deps-sorted.txt"],
+    cmd = "cat $< | sed -e 's|^@@|@|g; s|\r||g' | sed -e 's|^@[^/]*[+~]|@|g; s|\r||g' | sort > $@",
+)
+
+diff_test(
+    name = "library_no_transitives_test",
+    file1 = "library-no-transitives-deps.golden.unix",
+    file2 = ":library-no-transitives-deps-sorted",
+    tags = [] if is_bzlmod_enabled() else ["manual"],
+)
+
+# Library testing - verify neverlink attribute
+genquery(
+    name = "library-neverlink-query",
+    expression = "@library_neverlink_testing//:javax_servlet_javax_servlet_api",
+    opts = ["--output=build"],
+    scope = ["@library_neverlink_testing//:javax_servlet_javax_servlet_api"],
+    tags = [] if is_bzlmod_enabled() else ["manual"],
+)
+
+genrule(
+    name = "library-neverlink-extract",
+    srcs = [":library-neverlink-query"],
+    outs = ["library-neverlink-extract.txt"],
+    cmd = "cat $< | grep 'neverlink = True' > $@ || echo 'neverlink not found' > $@",
+)
+
+diff_test(
+    name = "library_neverlink_test",
+    file1 = "library-neverlink.golden.unix",
+    file2 = ":library-neverlink-extract",
+    tags = [] if is_bzlmod_enabled() else ["manual"],
+)
+
+# Library testing - verify testonly attribute
+genquery(
+    name = "library-testonly-query",
+    testonly = True,
+    expression = "@library_testonly_testing//:junit_junit",
+    opts = ["--output=build"],
+    scope = ["@library_testonly_testing//:junit_junit"],
+    tags = [] if is_bzlmod_enabled() else ["manual"],
+)
+
+genrule(
+    name = "library-testonly-extract",
+    testonly = 1,
+    srcs = [":library-testonly-query"],
+    outs = ["library-testonly-extract.txt"],
+    cmd = "cat $< | grep 'testonly = True' > $@ || echo 'testonly not found' > $@",
+)
+
+diff_test(
+    name = "library_testonly_test",
+    file1 = "library-testonly.golden.unix",
+    file2 = ":library-testonly-extract",
+    tags = [] if is_bzlmod_enabled() else ["manual"],
+)
+
+# Library with lock file test - verify that java_library can be built
+# using artifacts from a maven.library() with lock file.
+# Also verifies that srcjar is downloaded in pinned mode.
+java_library(
+    name = "library_lockfile_java_lib",
+    srcs = ["library_lockfile/LibraryLockfileTest.java"],
+    deps = ["@library_lockfile_testing//:com_google_guava_guava"],
+    tags = [] if is_bzlmod_enabled() else ["manual"],
+)
+
+build_test(
+    name = "library_lockfile_build_test",
+    targets = [
+        ":library_lockfile_java_lib",
+        "@library_lockfile_testing//:com_google_guava_guava_sources_31_1_jre_extension",
+        "@library_lockfile_testing//:com_google_guava_failureaccess_sources_1_0_1_extension",
+    ],
+    tags = [] if is_bzlmod_enabled() else ["manual"],
 )

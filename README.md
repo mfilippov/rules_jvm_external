@@ -37,6 +37,7 @@ Table of Contents
     - [Artifact exclusion](#artifact-exclusion)
     - [Compile-only dependencies](#compile-only-dependencies)
     - [Test-only dependencies](#test-only-dependencies)
+    - [Library dependencies with explicit transitive control](#library-dependencies-with-explicit-transitive-control)
     - [Resolving user-specified and transitive dependency version conflicts](#resolving-user-specified-and-transitive-dependency-version-conflicts)
     - [Overriding generated targets](#overriding-generated-targets)
     - [Proxies](#proxies)
@@ -65,7 +66,7 @@ Table of Contents
 
 ## Features
 
-* MODULE.bazel bzlmod configuration (Bazel 7 and above) 
+* MODULE.bazel bzlmod configuration (Bazel 7 and above)
 * WORKSPACE configuration
 * Artifact version resolution with Coursier, Maven or Gradle
 * Import downloaded JAR, AAR, source JARs
@@ -76,6 +77,7 @@ Table of Contents
 * Integration with Bazel's downloader and caching mechanisms for sharing artifacts across Bazel workspaces
 * Versionless target labels for simpler dependency management
 * Ability to declare multiple sets of versioned artifacts
+* Library dependencies with explicit transitive control
 * Supported on Windows, macOS, Linux
 
 Get the [latest release
@@ -716,6 +718,61 @@ This instructs `rules_jvm_external` to mark the generated target for
 `junit:Junit` with the `testonly = True` attribute, making the
 artifact available only for tests (e.g. `java_test`), or targets specifically
 marked as `testonly = True`.
+
+### Library dependencies with explicit transitive control
+
+If you want to treat a Maven dependency as a single unit with explicit control
+over which transitive dependencies are included, use `maven.library()`:
+
+```python
+load("@rules_jvm_external//:specs.bzl", "maven")
+
+maven_install(
+    artifacts = [
+        "org.springframework:spring-core:5.3.0",
+    ],
+    libraries = [
+        maven.library(
+            group = "com.google.guava",
+            artifact = "guava",
+            version = "31.1-jre",
+            transitives = [
+                "com.google.guava:failureaccess",
+            ],
+        ),
+    ],
+    repositories = [
+        "https://repo1.maven.org/maven2",
+    ],
+)
+```
+
+This generates a `java_library` target with `exports` containing the root JAR
+and the specified transitives, rather than the traditional `jvm_import` with recursive `deps`.
+
+| Attribute | Required | Default | Description |
+|-----------|----------|---------|-------------|
+| `group` | Yes | — | Maven group ID |
+| `artifact` | Yes | — | Maven artifact ID |
+| `version` | Yes | — | Maven version |
+| `transitives` | No | `[]` (none) | List of `group:artifact` to include |
+| `classifier` | No | None | Maven classifier (e.g., `natives-linux`) |
+| `neverlink` | No | False | Compile-only dependency |
+| `testonly` | No | False | Only for test targets |
+
+**Key differences from `maven.artifact()`:**
+
+| Aspect | `maven.artifact()` | `maven.library()` |
+|--------|-------------------|-------------------|
+| Model | Flat graph of targets | Library as single unit |
+| Target type | `jvm_import` with deps | `java_library` with exports |
+| Transitive control | `exclusions` (blacklist) | `transitives` (whitelist) |
+| Default transitives | All included | None included |
+
+**Note:** `maven.library()` automatically adds the artifact to dependency resolution.
+You don't need a separate entry in `artifacts = [...]` for libraries.
+
+For more details on using `maven.library()` with bzlmod, see [bzlmod.md](./docs/bzlmod.md).
 
 ### Resolving user-specified and transitive dependency version conflicts
 

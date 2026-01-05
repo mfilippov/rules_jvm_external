@@ -195,6 +195,24 @@ tasks:
     working_directory: examples/simple
     build_targets:
       - "//..."
+  library-workspace-linux:
+    name: "Library WORKSPACE example"
+    platform: ubuntu1804
+    working_directory: examples/library_workspace
+    build_targets:
+      - "//..."
+  library-workspace-macos:
+    name: "Library WORKSPACE example"
+    platform: macos
+    working_directory: examples/library_workspace
+    build_targets:
+      - "//..."
+  library-workspace-windows:
+    name: "Library WORKSPACE example"
+    platform: windows
+    working_directory: examples/library_workspace
+    build_targets:
+      - "//..."
   spring-boot-linux:
     name: "Spring boot example"
     platform: ubuntu1804

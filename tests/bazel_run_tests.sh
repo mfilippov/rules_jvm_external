@@ -356,6 +356,48 @@ function test_gradle_versions_catalog {
   bazel build @from_files//:all
 }
 
+function test_library_artifact_conflict {
+  # Test that declaring the same coordinate as both artifact and library fails
+  cd tests/integration/library_conflict
+  if bazel build @conflict_maven//:com_google_guava_guava >> "$TEST_LOG" 2>&1; then
+    cd - > /dev/null
+    printf "FAILED\n"
+    printf "FAILURE: Expected bazel to fail due to artifact/library conflict, but it succeeded\n"
+    return 1
+  fi
+  cd - > /dev/null
+
+  expect_log "declared as both artifact and library"
+}
+
+function test_library_invalid_transitive {
+  # Test that specifying a non-existent transitive fails
+  cd tests/integration/library_invalid_transitive
+  if bazel build @invalid_transitive_maven//:com_google_guava_guava >> "$TEST_LOG" 2>&1; then
+    cd - > /dev/null
+    printf "FAILED\n"
+    printf "FAILURE: Expected bazel to fail due to invalid transitive, but it succeeded\n"
+    return 1
+  fi
+  cd - > /dev/null
+
+  expect_log "not found in resolved dependency tree"
+}
+
+function test_library_conflict_classifier {
+  # Test that artifact and library conflict with same classifier fails
+  cd tests/integration/library_conflict_classifier
+  if bazel build @classifier_maven//:org_lwjgl_lwjgl >> "$TEST_LOG" 2>&1; then
+    cd - > /dev/null
+    printf "FAILED\n"
+    printf "FAILURE: Expected bazel to fail due to classifier conflict, but it succeeded\n"
+    return 1
+  fi
+  cd - > /dev/null
+
+  expect_log "declared as both artifact and library"
+}
+
 TESTS=(
   "test_coursier_resolution_with_boms"
   "test_maven_resolution"
@@ -383,6 +425,9 @@ TESTS=(
   # "test_gradle_metadata_is_resolved_correctly_for_aar_artifact"
   "test_gradle_metadata_is_resolved_correctly_for_jvm_artifact"
   "test_gradle_versions_catalog"
+  "test_library_artifact_conflict"
+  "test_library_invalid_transitive"
+  "test_library_conflict_classifier"
 )
 
 function run_tests() {

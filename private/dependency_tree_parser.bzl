@@ -602,6 +602,115 @@ def _generate_imports(repository_ctx, dependencies, explicit_artifacts, neverlin
 
     return ("\n".join(all_imports), jar_versionless_target_labels)
 
+def _generate_library_imports(repository_ctx, dependencies):
+    library_specs = [json.decode(lib) for lib in repository_ctx.attr.libraries]
+
+    if not library_specs:
+        return ("", [])
+
+    default_visibilities = repository_ctx.attr.strict_visibility_value if repository_ctx.attr.strict_visibility else ["//visibility:public"]
+
+    artifacts_by_coord = {}
+    for art in dependencies:
+        coord = strip_packaging_and_classifier_and_version(art["coordinates"])
+        if coord not in artifacts_by_coord:
+            artifacts_by_coord[coord] = art
+
+    needed_coords = {}
+    for library_spec in library_specs:
+        lib_coord = "%s:%s" % (library_spec["group"], library_spec["artifact"])
+        if lib_coord not in artifacts_by_coord:
+            fail("Library '%s' not found in resolved dependency tree" % lib_coord)
+        needed_coords[lib_coord] = True
+
+        for spec in library_spec.get("transitives", []):
+            trans_coord = "%s:%s" % (spec["group"], spec["artifact"]) if type(spec) == "dict" else spec
+            if trans_coord not in artifacts_by_coord:
+                fail("Transitive '%s' specified in library '%s' not found in resolved dependency tree" % (trans_coord, lib_coord))
+            needed_coords[trans_coord] = True
+
+    srcjar_paths = {}
+    srcjar_artifacts = {}
+    if repository_ctx.attr.fetch_sources:
+        for artifact in dependencies:
+            if get_classifier(artifact["coordinates"]) == "sources":
+                target_label = escape(strip_packaging_and_classifier_and_version(artifact["coordinates"]))
+                srcjar_paths[target_label] = artifact["file"]
+                srcjar_artifacts[target_label] = artifact
+
+    all_imports = []
+    jar_versionless_target_labels = []
+    seen_imports = {}
+
+    for coord in needed_coords:
+        artifact = artifacts_by_coord[coord]
+        artifact_path = artifact.get("file")
+        if not artifact_path:
+            continue
+
+        packaging = artifact_path.split(".").pop()
+        if packaging != "jar":
+            continue
+
+        jar_target_label = escape(coord) + "__jar"
+        if jar_target_label in seen_imports:
+            continue
+
+        seen_imports[jar_target_label] = True
+
+        lines = ["jvm_import("]
+        lines.append("\tname = \"%s\"," % jar_target_label)
+        lines.append("\tjar = \"%s\"," % artifact_path)
+
+        base_label = escape(coord)
+        if base_label in srcjar_paths:
+            lines.append("\tsrcjar = \"%s\"," % srcjar_paths[base_label])
+
+        lines.append("\ttags = [\"maven_coordinates=%s\"]," % artifact["coordinates"])
+        lines.append("\tvisibility = [%s]," % (",".join(["\"%s\"" % v for v in default_visibilities])))
+        lines.append(")")
+
+        all_imports.append("\n".join(lines))
+        jar_versionless_target_labels.append(base_label)
+
+        # For pinned mode, add copy_file to download artifacts from http_file repository
+        if repository_ctx.attr.maven_install_json:
+            all_imports.append(_genrule_copy_artifact_from_http_file(artifact, default_visibilities))
+            if base_label in srcjar_artifacts:
+                all_imports.append(_genrule_copy_artifact_from_http_file(srcjar_artifacts[base_label], default_visibilities))
+
+    for library_spec in library_specs:
+        group = library_spec["group"]
+        artifact_name = library_spec["artifact"]
+        lib_coord = "%s:%s" % (group, artifact_name)
+        target_label = escape(lib_coord)
+
+        exports = ["\t\t\":%s__jar\"," % target_label]
+
+        for spec in library_spec.get("transitives", []):
+            trans_coord = "%s:%s" % (spec["group"], spec["artifact"]) if type(spec) == "dict" else spec
+            exports.append("\t\t\":%s__jar\"," % escape(trans_coord))
+
+        lines = ["java_library("]
+        lines.append("\tname = \"%s\"," % target_label)
+        lines.append("\texports = [")
+        lines.extend(_deduplicate_list(exports))
+        lines.append("\t],")
+        lines.append("\ttags = [\"maven_coordinates=%s:%s:%s\"]," % (group, artifact_name, library_spec.get("version", "")))
+
+        if library_spec.get("neverlink"):
+            lines.append("\tneverlink = True,")
+        if library_spec.get("testonly"):
+            lines.append("\ttestonly = True,")
+
+        lines.append("\tvisibility = [%s]," % (",".join(["\"%s\"" % v for v in default_visibilities])))
+        lines.append(")")
+
+        all_imports.append("\n".join(lines))
+
+    return ("\n".join(all_imports), jar_versionless_target_labels)
+
 parser = struct(
     generate_imports = _generate_imports,
+    generate_library_imports = _generate_library_imports,
 )

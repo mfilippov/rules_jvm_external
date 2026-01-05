@@ -1,0 +1,3 @@
+@library_no_transitives_testing//:com_google_guava_guava
+@library_no_transitives_testing//:com_google_guava_guava__jar
+

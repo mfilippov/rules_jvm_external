@@ -112,6 +112,89 @@ maven.from_toml(
 )
 ```
 
+## Library dependencies (`maven.library()`)
+
+If you want to treat a Maven dependency as a single unit with explicit control
+over which transitive dependencies are included, use `maven.library()`:
+
+```starlark
+maven = use_extension("@rules_jvm_external//:extensions.bzl", "maven")
+
+maven.library(
+    name = "maven",
+    group = "com.google.guava",
+    artifact = "guava",
+    version = "31.1-jre",
+    transitives = [
+        "com.google.guava:failureaccess",
+    ],
+)
+
+use_repo(maven, "maven")
+```
+
+This generates a `java_library` target with `exports` containing only the root JAR
+and the specified transitives, rather than the traditional `jvm_import` with recursive `deps`.
+
+### Key attributes
+
+| Attribute | Required | Default | Description |
+|-----------|----------|---------|-------------|
+| `group` | Yes | — | Maven group ID |
+| `artifact` | Yes | — | Maven artifact ID |
+| `version` | Yes | — | Maven version |
+| `transitives` | No | `[]` (none) | List of `group:artifact` to include |
+| `classifier` | No | None | Maven classifier (e.g., `natives-linux`) |
+| `neverlink` | No | False | Compile-only dependency |
+| `testonly` | No | False | Only for test targets |
+
+### Self-sufficient library
+
+`maven.library()` automatically adds the artifact to dependency resolution. You don't need
+a separate `maven.artifact()` or `maven.install(artifacts = [...])` declaration:
+
+```starlark
+# This is all you need:
+maven.library(
+    name = "maven",
+    group = "com.google.guava",
+    artifact = "guava",
+    version = "31.1-jre",
+    transitives = ["com.google.guava:failureaccess"],
+)
+
+# NO need for:
+# maven.install(
+#     name = "maven",
+#     artifacts = ["com.google.guava:guava:31.1-jre"],
+# )
+```
+
+### Combining with `maven.install()`
+
+You can combine `maven.library()` with `maven.install()` in the same repository.
+The library artifacts and install artifacts are resolved together:
+
+```starlark
+maven.install(
+    name = "maven",
+    artifacts = [
+        "org.springframework:spring-core:5.3.0",
+    ],
+)
+
+maven.library(
+    name = "maven",
+    group = "com.google.guava",
+    artifact = "guava",
+    version = "31.1-jre",
+    transitives = ["com.google.guava:failureaccess"],
+)
+```
+
+**Note:** Declaring the same coordinate as both an artifact (in `maven.install`) and
+a library (in `maven.library`) is an error.
+
 ## Artifact exclusion
 
 The non-bzlmod instructions for how to configure

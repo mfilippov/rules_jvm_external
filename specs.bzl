@@ -99,10 +99,60 @@ def _maven_exclusion(group, artifact):
     # }
     return {"group": group, "artifact": artifact}
 
+def _maven_library(group, artifact, version, transitives = None, classifier = None, neverlink = None, testonly = None):
+    """Generates the data map for a Maven library with explicit transitive dependency control.
+
+    Unlike maven.artifact() which creates a flat graph of jvm_import targets,
+    maven.library() treats the dependency as a single unit, bundling the library
+    and its transitives into a java_library with exports.
+
+    The library is self-sufficient - it automatically adds the artifact to resolution.
+
+    Args:
+        group: The Maven artifact coordinate group name (ex: "com.google.guava").
+        artifact: The Maven artifact coordinate artifact name (ex: "guava").
+        version: The Maven artifact coordinate version name (ex: "31.1-jre").
+        transitives: List of transitive dependencies to include in exports.
+            - Not specified or empty list: no transitives (only the root JAR)
+            - List of "group:artifact" strings: root JAR + specified transitives
+        classifier: The Maven artifact classifier (ex: "natives-linux").
+        neverlink: Determines if this library should be part of the runtime classpath.
+        testonly: Determines whether this library is available for targets not marked as `testonly = True`.
+    """
+
+    # Output Schema:
+    #     {
+    #         "group": String
+    #         "artifact": String
+    #         "version": String
+    #         "classifier": Optional String
+    #         "transitives": Optional Array of {"group": String, "artifact": String}
+    #         "neverlink": Optional Boolean
+    #         "testonly": Optional Boolean
+    #         "is_library": True  # Marker to distinguish from regular artifacts
+    #     }
+    maven_library = {}
+    maven_library["group"] = group
+    maven_library["artifact"] = artifact
+    maven_library["version"] = version
+    maven_library["is_library"] = True
+
+    if classifier != None:
+        maven_library["classifier"] = classifier
+    if transitives != None:
+        maven_library["transitives"] = transitives
+    if neverlink != None:
+        maven_library["neverlink"] = neverlink
+    if testonly != None:
+        maven_library["testonly"] = testonly
+
+    return maven_library
+
 maven = struct(
     repository = _maven_repository,
     artifact = _maven_artifact,
     exclusion = _maven_exclusion,
+    library = _maven_library,
 )
 
 #
@@ -166,11 +216,54 @@ def _parse_artifact_spec_list(artifact_specs):
             artifacts.append(artifact)
     return artifacts
 
+def _parse_transitives_spec_list(transitives_specs):
+    """
+    Given a list of strings (g:a) or dicts, returns a list of transitives maps.
+    Uses the same format as exclusions: group:artifact without version.
+    """
+    if transitives_specs == None:
+        return []
+    transitives = []
+    for spec in transitives_specs:
+        if type(spec) == "string":
+            pieces = spec.split(":")
+            if len(pieces) == 2:
+                spec = {"group": pieces[0], "artifact": pieces[1]}
+            else:
+                fail(("Invalid transitives: %s. Transitives are specified as " +
+                      "group-id:artifact-id, without the version, packaging or " +
+                      "classifier.") % spec)
+        transitives.append(spec)
+    return transitives
+
+def _parse_library_spec_list(library_specs):
+    """
+    Given a list containing library maps (from maven.library()), returns a list of validated library maps.
+    """
+    libraries = []
+    for library in library_specs:
+        if type(library) != "dict":
+            fail("Library spec must be created using maven.library(), got: %s" % type(library))
+        if not library.get("is_library"):
+            fail("Library spec must be created using maven.library(), not maven.artifact()")
+        if "version" not in library or library["version"] == "":
+            fail("Library must have a version specified")
+
+        # Parse transitives if present
+        if "transitives" in library:
+            library = dict(library)  # Make a copy to avoid modifying the original
+            library["transitives"] = _parse_transitives_spec_list(library["transitives"])
+
+        libraries.append(library)
+    return libraries
+
 parse = struct(
     parse_maven_coordinate = _parse_maven_coordinate_string,
     parse_repository_spec_list = _parse_repository_spec_list,
     parse_artifact_spec_list = _parse_artifact_spec_list,
     parse_exclusion_spec_list = _parse_exclusion_spec_list,
+    parse_transitives_spec_list = _parse_transitives_spec_list,
+    parse_library_spec_list = _parse_library_spec_list,
 )
 
 #
@@ -241,6 +334,47 @@ def _artifact_spec_to_json(artifact_spec):
 
     return with_forced_version + " }"
 
+def _transitives_spec_to_json(transitives_spec):
+    """
+    Given a transitives spec, returns the json serialization of the object.
+    Same format as exclusion: {"group": "...", "artifact": "..."}
+    """
+    return "{ \"group\": \"" + transitives_spec["group"] + "\", \"artifact\": \"" + transitives_spec["artifact"] + "\" }"
+
+def _transitives_spec_list_to_json(transitives_specs):
+    """
+    Given a list of transitives specs, returns its json serialization.
+    """
+    return "[" + ", ".join([_transitives_spec_to_json(spec) for spec in transitives_specs]) + "]"
+
+def _library_spec_to_json(library_spec):
+    """
+    Given a library spec, returns the json serialization of the object.
+    """
+    required = "{ \"group\": \"" + library_spec["group"] + \
+               "\", \"artifact\": \"" + library_spec["artifact"] + \
+               "\", \"version\": \"" + library_spec["version"] + \
+               "\", \"is_library\": true"
+
+    with_classifier = required + ((", \"classifier\": \"" + library_spec["classifier"] + "\"") if library_spec.get("classifier") != None else "")
+
+    # Handle transitives - empty list (default) or list of specs
+    if library_spec.get("transitives") != None:
+        transitives_specs = library_spec["transitives"]
+        if type(transitives_specs) == "list" and len(transitives_specs) > 0:
+            # Parse string specs to dicts if needed
+            parsed_specs = _parse_transitives_spec_list(transitives_specs)
+            with_transitives = with_classifier + ", \"transitives\": " + _transitives_spec_list_to_json(parsed_specs)
+        else:
+            with_transitives = with_classifier
+    else:
+        with_transitives = with_classifier
+
+    with_neverlink = with_transitives + ((", \"neverlink\": " + str(library_spec.get("neverlink")).lower()) if library_spec.get("neverlink") != None else "")
+    with_testonly = with_neverlink + ((", \"testonly\": " + str(library_spec.get("testonly")).lower()) if library_spec.get("testonly") != None else "")
+
+    return with_testonly + " }"
+
 json = struct(
     write_repository_credentials_spec = _repository_credentials_spec_to_json,
     write_repository_spec = _repository_spec_to_json,
@@ -248,6 +382,9 @@ json = struct(
     write_exclusion_spec_list = _exclusion_spec_list_to_json,
     write_override_license_types_spec = _override_license_types_spec_to_json,
     write_artifact_spec = _artifact_spec_to_json,
+    write_transitives_spec = _transitives_spec_to_json,
+    write_transitives_spec_list = _transitives_spec_list_to_json,
+    write_library_spec = _library_spec_to_json,
 )
 
 #
@@ -264,6 +401,14 @@ def _artifact_to_coord(artifact):
     classifier = (",classifier=" + artifact["classifier"]) if artifact.get("classifier") != None else ""
     type = (",type=" + artifact["packaging"]) if artifact.get("packaging") not in (None, "jar") else ""
     return artifact["group"] + ":" + artifact["artifact"] + ":" + artifact["version"] + classifier + type
+
+def _library_to_coord(library):
+    """
+    Converts a library spec to a Coursier coordinate string.
+    Libraries don't have packaging (always jar).
+    """
+    classifier = (",classifier=" + library["classifier"]) if library.get("classifier") != None else ""
+    return library["group"] + ":" + library["artifact"] + ":" + library["version"] + classifier
 
 #
 # Returns a string "{hostname} {user}:{password}" for a repository_spec
@@ -401,6 +546,7 @@ def _parse_netrc(contents, filename = None):
 
 utils = struct(
     artifact_coordinate = _artifact_to_coord,
+    library_coordinate = _library_to_coord,
     netrc_credentials = _netrc_credentials,
     parse_netrc = _parse_netrc,
     repo_credentials = _repository_credentials,

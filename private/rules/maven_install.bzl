@@ -7,6 +7,7 @@ def maven_install(
         name = DEFAULT_REPOSITORY_NAME,
         repositories = [],
         artifacts = [],
+        libraries = [],
         boms = [],
         resolver = "coursier",
         fail_on_missing_checksum = True,
@@ -41,6 +42,9 @@ def maven_install(
         Supports URLs with HTTP Basic Authentication, e.g. "https://username:password@example.com".
       boms: A list of Maven artifact coordinates in the form of `group:artifact:version` which refer to Maven BOMs.
       artifacts: A list of Maven artifact coordinates in the form of `group:artifact:version`.
+      libraries: A list of Maven libraries created with `maven.library()`. Unlike artifacts which create
+        a flat graph of targets, libraries bundle their dependencies into a single java_library target
+        with explicit exports. Use `transitives` to control which transitive dependencies are included.
       resolver: Which resolver to use. One of `coursier`, `gradle` or `maven`.
       fail_on_missing_checksum: fail the fetch if checksum attributes are not present.
       fetch_sources: Additionally fetch source JARs.
@@ -93,6 +97,10 @@ def maven_install(
     for artifact in parse.parse_artifact_spec_list(artifacts):
         artifacts_json_strings.append(_json.write_artifact_spec(artifact))
 
+    libraries_json_strings = []
+    for library in parse.parse_library_spec_list(libraries):
+        libraries_json_strings.append(_json.write_library_spec(library))
+
     boms_json_strings = []
     for bom in parse.parse_artifact_spec_list(boms):
         boms_json_strings.append(_json.write_artifact_spec(bom))
@@ -129,6 +137,7 @@ def maven_install(
             pinned_repo_name = None if maven_install_json == None else name,
             repositories = repositories_json_strings,
             artifacts = artifacts_json_strings,
+            libraries = libraries_json_strings,
             boms = boms_json_strings,
             fail_on_missing_checksum = fail_on_missing_checksum,
             fetch_sources = fetch_sources,
@@ -162,6 +171,7 @@ def maven_install(
             resolver = resolver,
             repositories = repositories_json_strings,
             artifacts = artifacts_json_strings,
+            libraries = libraries_json_strings,
             boms = boms_json_strings,
             maven_install_json = maven_install_json,
             fetch_sources = fetch_sources,

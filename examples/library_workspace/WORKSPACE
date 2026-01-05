@@ -1,0 +1,34 @@
+local_repository(
+    name = "rules_jvm_external",
+    path = "../../",
+)
+
+load("@rules_jvm_external//:repositories.bzl", "rules_jvm_external_deps")
+
+rules_jvm_external_deps()
+
+load("@rules_jvm_external//:setup.bzl", "rules_jvm_external_setup")
+
+rules_jvm_external_setup()
+
+load("@rules_jvm_external//:defs.bzl", "maven_install")
+load("@rules_jvm_external//:specs.bzl", "maven")
+
+maven_install(
+    artifacts = [
+        "junit:junit:4.13.2",
+    ],
+    libraries = [
+        maven.library(
+            group = "com.google.guava",
+            artifact = "guava",
+            version = "31.1-jre",
+            transitives = [
+                "com.google.guava:failureaccess",
+            ],
+        ),
+    ],
+    repositories = [
+        "https://repo1.maven.org/maven2",
+    ],
+)

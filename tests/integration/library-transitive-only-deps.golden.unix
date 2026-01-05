@@ -1,0 +1,3 @@
+@library_testing//:com_google_guava_failureaccess__jar
+@library_testing//:com_google_guava_guava
+@library_testing//:com_google_guava_guava__jar

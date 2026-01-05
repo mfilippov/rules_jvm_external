@@ -1,0 +1,24 @@
+module(name = "library_conflict_classifier_test")
+
+bazel_dep(name = "rules_jvm_external", version = "0.0")
+local_path_override(
+    module_name = "rules_jvm_external",
+    path = "../../../",
+)
+
+maven = use_extension("@rules_jvm_external//:extensions.bzl", "maven")
+maven.artifact(
+    name = "classifier_maven",
+    group = "org.lwjgl",
+    artifact = "lwjgl",
+    version = "3.3.1",
+    classifier = "natives-linux",
+)
+maven.library(
+    name = "classifier_maven",
+    group = "org.lwjgl",
+    artifact = "lwjgl",
+    version = "3.3.1",
+    classifier = "natives-linux",
+)
+use_repo(maven, "classifier_maven")

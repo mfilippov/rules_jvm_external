@@ -151,6 +151,33 @@ def _is_directory(repository_ctx, path):
 def _is_unpinned(repository_ctx):
     return repository_ctx.attr.pinned_repo_name != ""
 
+def _filter_library_coordinates(dependencies, libraries):
+    if not libraries:
+        return dependencies
+
+    library_coords = {}
+    for lib_json in libraries:
+        lib = json.decode(lib_json)
+        library_coords["%s:%s" % (lib["group"], lib["artifact"])] = True
+        for trans in lib.get("transitives", []):
+            if type(trans) == "dict":
+                library_coords["%s:%s" % (trans["group"], trans["artifact"])] = True
+            else:
+                library_coords[trans] = True
+
+    filtered = []
+    for dep in dependencies:
+        coord = dep.get("coord", dep.get("coordinates", ""))
+        parts = coord.split(":")
+        if len(parts) >= 2:
+            simple_coord = "%s:%s" % (parts[0], parts[1])
+            if simple_coord not in library_coords:
+                filtered.append(dep)
+        else:
+            filtered.append(dep)
+
+    return filtered
+
 def _shell_quote(s):
     # Lifted from
     #   https://github.com/bazelbuild/bazel-skylib/blob/6a17363a3c27dde70ab5002ad9f2e29aff1e1f4b/lib/shell.bzl#L49
@@ -645,9 +672,10 @@ def _pinned_coursier_fetch_impl(repository_ctx):
     )
 
     repository_ctx.report_progress("Generating BUILD targets..")
+    all_artifacts = importer.get_artifacts(maven_install_json_content)
     (generated_imports, jar_versionless_target_labels) = parser.generate_imports(
         repository_ctx = repository_ctx,
-        dependencies = importer.get_artifacts(maven_install_json_content),
+        dependencies = _filter_library_coordinates(all_artifacts, repository_ctx.attr.libraries),
         explicit_artifacts = {
             a["group"] + ":" + a["artifact"] + (":" + a["classifier"] if "classifier" in a else ""): True
             for a in artifacts
@@ -673,6 +701,15 @@ def _pinned_coursier_fetch_impl(repository_ctx):
         override_target_visibilities = repository_ctx.attr.override_target_visibilities,
         skip_maven_local_dependencies = False,
     )
+
+    if repository_ctx.attr.libraries:
+        (library_imports, library_labels) = parser.generate_library_imports(
+            repository_ctx = repository_ctx,
+            dependencies = all_artifacts,
+        )
+        if library_imports:
+            generated_imports = generated_imports + "\n" + library_imports
+            jar_versionless_target_labels.extend(library_labels)
 
     repository_ctx.template(
         "compat_repository.bzl",
@@ -1095,6 +1132,22 @@ def _coursier_fetch_impl(repository_ctx):
     for artifact in repository_ctx.attr.artifacts:
         artifacts.append(json.decode(artifact))
 
+    # Add libraries to artifacts for resolution (libraries are self-sufficient)
+    libraries = [json.decode(lib) for lib in repository_ctx.attr.libraries]
+    for lib in libraries:
+        lib_artifact = {
+            "group": lib["group"],
+            "artifact": lib["artifact"],
+            "version": lib["version"],
+        }
+        if lib.get("classifier"):
+            lib_artifact["classifier"] = lib["classifier"]
+        if lib.get("neverlink"):
+            lib_artifact["neverlink"] = lib["neverlink"]
+        if lib.get("testonly"):
+            lib_artifact["testonly"] = lib["testonly"]
+        artifacts.append(lib_artifact)
+
     _check_artifacts_are_unique(artifacts, repository_ctx.attr.duplicate_version_warning)
 
     boms = [json.decode(bom) for bom in repository_ctx.attr.boms]
@@ -1331,9 +1384,10 @@ def _coursier_fetch_impl(repository_ctx):
     )
 
     repository_ctx.report_progress("Generating BUILD targets..")
+    all_artifacts = v2_lock_file.get_artifacts(lock_file_contents)
     (generated_imports, jar_versionless_target_labels) = parser.generate_imports(
         repository_ctx = repository_ctx,
-        dependencies = v2_lock_file.get_artifacts(lock_file_contents),
+        dependencies = _filter_library_coordinates(all_artifacts, repository_ctx.attr.libraries),
         explicit_artifacts = {
             a["group"] + ":" + a["artifact"] + (":" + a["classifier"] if "classifier" in a else ""): True
             for a in artifacts
@@ -1360,6 +1414,15 @@ def _coursier_fetch_impl(repository_ctx):
         # Skip maven local dependencies if generating the unpinned repository
         skip_maven_local_dependencies = _is_unpinned(repository_ctx),
     )
+
+    if repository_ctx.attr.libraries:
+        (library_imports, library_labels) = parser.generate_library_imports(
+            repository_ctx = repository_ctx,
+            dependencies = all_artifacts,
+        )
+        if library_imports:
+            generated_imports = generated_imports + "\n" + library_imports
+            jar_versionless_target_labels.extend(library_labels)
 
     # This repository rule can be either in the pinned or unpinned state, depending on when
     # the user invokes artifact pinning. Normalize the repository name here.
@@ -1464,6 +1527,7 @@ pinned_coursier_fetch = repository_rule(
         "resolver": attr.string(doc = "The resolver to use", values = ["coursier", "gradle", "maven"], default = "coursier"),
         "repositories": attr.string_list(),  # list of repository objects, each as json
         "artifacts": attr.string_list(),  # list of artifact objects, each as json
+        "libraries": attr.string_list(default = []),  # list of library objects, each as json
         "boms": attr.string_list(),  # list of bom objects, each as json
         "fetch_sources": attr.bool(default = False),
         "fetch_javadoc": attr.bool(default = False),
@@ -1520,6 +1584,7 @@ coursier_fetch = repository_rule(
         "user_provided_name": attr.string(),
         "repositories": attr.string_list(),  # list of repository objects, each as json
         "artifacts": attr.string_list(),  # list of artifact objects, each as json
+        "libraries": attr.string_list(default = []),  # list of library objects, each as json
         "boms": attr.string_list(),  # list of bom objects, each as json
         "fail_on_missing_checksum": attr.bool(default = True),
         "fetch_sources": attr.bool(default = False),

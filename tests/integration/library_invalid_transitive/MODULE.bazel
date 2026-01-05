@@ -1,0 +1,17 @@
+module(name = "library_invalid_transitive_test")
+
+bazel_dep(name = "rules_jvm_external", version = "0.0")
+local_path_override(
+    module_name = "rules_jvm_external",
+    path = "../../../",
+)
+
+maven = use_extension("@rules_jvm_external//:extensions.bzl", "maven")
+maven.library(
+    name = "invalid_transitive_maven",
+    group = "com.google.guava",
+    artifact = "guava",
+    version = "31.1-jre",
+    transitives = ["com.nonexistent:artifact"],
+)
+use_repo(maven, "invalid_transitive_maven")

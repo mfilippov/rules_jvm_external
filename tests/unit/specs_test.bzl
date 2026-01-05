@@ -55,6 +55,59 @@ def _maven_exclusion_test_impl(ctx):
 
 maven_exclusion_test = unittest.make(_maven_exclusion_test_impl)
 
+def _maven_library_test_impl(ctx):
+    env = unittest.begin(ctx)
+
+    # Basic library with required attributes only
+    asserts.equals(
+        env,
+        {"group": "com.google.guava", "artifact": "guava", "version": "31.1-jre", "is_library": True},
+        maven.library("com.google.guava", "guava", "31.1-jre"),
+    )
+
+    # Library with classifier
+    asserts.equals(
+        env,
+        {"group": "org.lwjgl", "artifact": "lwjgl", "version": "3.3.1", "is_library": True, "classifier": "natives-linux"},
+        maven.library("org.lwjgl", "lwjgl", "3.3.1", classifier = "natives-linux"),
+    )
+
+    # Library with transitives (whitelist)
+    asserts.equals(
+        env,
+        {
+            "group": "com.google.guava",
+            "artifact": "guava",
+            "version": "31.1-jre",
+            "is_library": True,
+            "transitives": ["com.google.guava:failureaccess", "org.checkerframework:checker-qual"],
+        },
+        maven.library(
+            "com.google.guava",
+            "guava",
+            "31.1-jre",
+            transitives = ["com.google.guava:failureaccess", "org.checkerframework:checker-qual"],
+        ),
+    )
+
+    # Library with empty transitives (no transitives - default behavior)
+    asserts.equals(
+        env,
+        {"group": "com.google.guava", "artifact": "guava", "version": "31.1-jre", "is_library": True, "transitives": []},
+        maven.library("com.google.guava", "guava", "31.1-jre", transitives = []),
+    )
+
+    # Library with neverlink and testonly
+    asserts.equals(
+        env,
+        {"group": "javax.servlet", "artifact": "javax.servlet-api", "version": "4.0.1", "is_library": True, "neverlink": True, "testonly": True},
+        maven.library("javax.servlet", "javax.servlet-api", "4.0.1", neverlink = True, testonly = True),
+    )
+
+    return unittest.end(env)
+
+maven_library_test = unittest.make(_maven_library_test_impl)
+
 #
 # Parse tests
 #
@@ -146,6 +199,96 @@ def _parse_artifact_spec_list_test_impl(ctx):
     return unittest.end(env)
 
 parse_artifact_spec_list_test = unittest.make(_parse_artifact_spec_list_test_impl)
+
+def _parse_transitives_spec_list_test_impl(ctx):
+    env = unittest.begin(ctx)
+
+    # None returns empty list (default = no transitives)
+    asserts.equals(
+        env,
+        [],
+        parse.parse_transitives_spec_list(None),
+    )
+
+    # Empty list returns empty list
+    asserts.equals(
+        env,
+        [],
+        parse.parse_transitives_spec_list([]),
+    )
+
+    # String format "group:artifact"
+    asserts.equals(
+        env,
+        [
+            {"group": "com.google.guava", "artifact": "failureaccess"},
+            {"group": "org.checkerframework", "artifact": "checker-qual"},
+        ],
+        parse.parse_transitives_spec_list([
+            "com.google.guava:failureaccess",
+            "org.checkerframework:checker-qual",
+        ]),
+    )
+
+    # Dict format
+    asserts.equals(
+        env,
+        [
+            {"group": "com.google.guava", "artifact": "failureaccess"},
+        ],
+        parse.parse_transitives_spec_list([
+            {"group": "com.google.guava", "artifact": "failureaccess"},
+        ]),
+    )
+
+    return unittest.end(env)
+
+parse_transitives_spec_list_test = unittest.make(_parse_transitives_spec_list_test_impl)
+
+def _parse_library_spec_list_test_impl(ctx):
+    env = unittest.begin(ctx)
+
+    # Empty list
+    asserts.equals(
+        env,
+        [],
+        parse.parse_library_spec_list([]),
+    )
+
+    # Basic library
+    asserts.equals(
+        env,
+        [
+            {"group": "com.google.guava", "artifact": "guava", "version": "31.1-jre", "is_library": True},
+        ],
+        parse.parse_library_spec_list([
+            maven.library("com.google.guava", "guava", "31.1-jre"),
+        ]),
+    )
+
+    # Library with transitives (strings are parsed to dicts)
+    result = parse.parse_library_spec_list([
+        maven.library(
+            "com.google.guava",
+            "guava",
+            "31.1-jre",
+            transitives = ["com.google.guava:failureaccess"],
+        ),
+    ])
+    asserts.equals(env, 1, len(result))
+    asserts.equals(env, "com.google.guava", result[0]["group"])
+    asserts.equals(env, "guava", result[0]["artifact"])
+    asserts.equals(env, "31.1-jre", result[0]["version"])
+    asserts.equals(env, True, result[0]["is_library"])
+    asserts.equals(
+        env,
+        [{"group": "com.google.guava", "artifact": "failureaccess"}],
+        result[0]["transitives"],
+    )
+
+    return unittest.end(env)
+
+parse_library_spec_list_test = unittest.make(_parse_library_spec_list_test_impl)
 
 #
 # JSON tests
@@ -254,6 +397,122 @@ def _artifact_to_json_test_impl(ctx):
     return unittest.end(env)
 
 artifact_spec_to_json_test = unittest.make(_artifact_to_json_test_impl)
+
+def _transitives_spec_to_json_test_impl(ctx):
+    env = unittest.begin(ctx)
+    asserts.equals(
+        env,
+        "{ \"group\": \"com.google.guava\", \"artifact\": \"failureaccess\" }",
+        json.write_transitives_spec({"group": "com.google.guava", "artifact": "failureaccess"}),
+    )
+    return unittest.end(env)
+
+transitives_spec_to_json_test = unittest.make(_transitives_spec_to_json_test_impl)
+
+def _transitives_spec_list_to_json_test_impl(ctx):
+    env = unittest.begin(ctx)
+    asserts.equals(
+        env,
+        "[" +
+        "{ \"group\": \"com.google.guava\", \"artifact\": \"failureaccess\" }, " +
+        "{ \"group\": \"org.checkerframework\", \"artifact\": \"checker-qual\" }" +
+        "]",
+        json.write_transitives_spec_list([
+            {"group": "com.google.guava", "artifact": "failureaccess"},
+            {"group": "org.checkerframework", "artifact": "checker-qual"},
+        ]),
+    )
+    asserts.equals(
+        env,
+        "[]",
+        json.write_transitives_spec_list([]),
+    )
+    return unittest.end(env)
+
+transitives_spec_list_to_json_test = unittest.make(_transitives_spec_list_to_json_test_impl)
+
+def _library_spec_to_json_test_impl(ctx):
+    env = unittest.begin(ctx)
+
+    # Basic library
+    asserts.equals(
+        env,
+        "{ \"group\": \"com.google.guava\", \"artifact\": \"guava\", \"version\": \"31.1-jre\", \"is_library\": true }",
+        json.write_library_spec({"group": "com.google.guava", "artifact": "guava", "version": "31.1-jre", "is_library": True}),
+    )
+
+    # Library with classifier
+    asserts.equals(
+        env,
+        "{ \"group\": \"org.lwjgl\", \"artifact\": \"lwjgl\", \"version\": \"3.3.1\", \"is_library\": true, \"classifier\": \"natives-linux\" }",
+        json.write_library_spec({"group": "org.lwjgl", "artifact": "lwjgl", "version": "3.3.1", "is_library": True, "classifier": "natives-linux"}),
+    )
+
+    # Library with transitives (already parsed to dicts)
+    asserts.equals(
+        env,
+        "{ \"group\": \"com.google.guava\", \"artifact\": \"guava\", \"version\": \"31.1-jre\", \"is_library\": true, " +
+        "\"transitives\": [{ \"group\": \"com.google.guava\", \"artifact\": \"failureaccess\" }] }",
+        json.write_library_spec({
+            "group": "com.google.guava",
+            "artifact": "guava",
+            "version": "31.1-jre",
+            "is_library": True,
+            "transitives": [{"group": "com.google.guava", "artifact": "failureaccess"}],
+        }),
+    )
+
+    # Library with empty transitives (not serialized - default behavior)
+    asserts.equals(
+        env,
+        "{ \"group\": \"com.google.guava\", \"artifact\": \"guava\", \"version\": \"31.1-jre\", \"is_library\": true }",
+        json.write_library_spec({
+            "group": "com.google.guava",
+            "artifact": "guava",
+            "version": "31.1-jre",
+            "is_library": True,
+            "transitives": [],
+        }),
+    )
+
+    # Library with neverlink and testonly
+    asserts.equals(
+        env,
+        "{ \"group\": \"javax.servlet\", \"artifact\": \"javax.servlet-api\", \"version\": \"4.0.1\", \"is_library\": true, \"neverlink\": true, \"testonly\": true }",
+        json.write_library_spec({
+            "group": "javax.servlet",
+            "artifact": "javax.servlet-api",
+            "version": "4.0.1",
+            "is_library": True,
+            "neverlink": True,
+            "testonly": True,
+        }),
+    )
+
+    return unittest.end(env)
+
+library_spec_to_json_test = unittest.make(_library_spec_to_json_test_impl)
+
+def _library_coordinate_test_impl(ctx):
+    env = unittest.begin(ctx)
+
+    # Basic library coordinate
+    asserts.equals(
+        env,
+        "com.google.guava:guava:31.1-jre",
+        utils.library_coordinate({"group": "com.google.guava", "artifact": "guava", "version": "31.1-jre"}),
+    )
+
+    # Library coordinate with classifier
+    asserts.equals(
+        env,
+        "org.lwjgl:lwjgl:3.3.1,classifier=natives-linux",
+        utils.library_coordinate({"group": "org.lwjgl", "artifact": "lwjgl", "version": "3.3.1", "classifier": "natives-linux"}),
+    )
+
+    return unittest.end(env)
+
+library_coordinate_test = unittest.make(_library_coordinate_test_impl)
 
 def _repo_credentials_test_impl(ctx):
     repo_url = "https://maven.google.com/"
@@ -400,12 +659,15 @@ def artifact_specs_test_suite():
         maven_repository_test,
         maven_artifact_test,
         maven_exclusion_test,
+        maven_library_test,
     )
 
     unittest.suite(
         "artifact_parse_tests",
         parse_repository_spec_list_test,
         parse_artifact_spec_list_test,
+        parse_transitives_spec_list_test,
+        parse_library_spec_list_test,
     )
 
     unittest.suite(
@@ -416,6 +678,9 @@ def artifact_specs_test_suite():
         exclusion_spec_list_to_json_test,
         override_license_types_spec_to_json_test,
         artifact_spec_to_json_test,
+        transitives_spec_to_json_test,
+        transitives_spec_list_to_json_test,
+        library_spec_to_json_test,
     )
 
     unittest.suite(
@@ -423,4 +688,5 @@ def artifact_specs_test_suite():
         repo_credentials_test,
         netrc_credentials_test,
         parse_netrc_test,
+        library_coordinate_test,
     )
